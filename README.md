@@ -1,4 +1,6 @@
 # CodeFans
+written by wanglulin
+
 ## About the team
 We are a team who are interested in coding and willing to improve his/her code skills. **We are here for fun**.
 
