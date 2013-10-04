@@ -1,17 +1,155 @@
+##scanf的参数格式问题
+written by  李玉高
 
-#表格测试
+scanf等一系列函数,对%d格式的说明如下,要求参数必须为int型的指针:
+```
+d      Matches an optionally signed decimal integer; the next pointer must be a pointer to int.
+```
 
-值|描述 
-:---------------|:---------------
-baseline|默认元素放置在父元素的基线上
-sub|垂直对齐文本的下标
-super|垂直对齐文本的上标
-top|把元素的顶端与行中最高元素的顶端对齐
-text-top|把元素的顶端与父元素字体的顶端对齐
-middle|把此元素放置在父元素的中部
-bottom|把元素的顶端与行中最低的元素的顶端对齐
-text-bottom|把元素的底端与父元素字体的底端对齐
-length|相对基准线的偏移
-%|使用 "line-height" 属性的百分比值来排列此元素允许使用负值
-inherit|规定应该从父元素继承 vertical-align 属性的值*（所有的IE都不支持？！）*
+当传入的参数不是int型的指针时,scanf函数内部无法做检查; 不过这种类型不匹配的函数参数传递,编译器能够检查,并给出warning;
+对gcc,增加 **-Wformat选项** ,效果如下:
+```
+warning: format ‘%d’ expects type ‘int *’, but argument 2 has type ‘char *’
+```
+
+实际上很多情况下,-Wformat选项默认并没有开启,而大家往往又没有对scanf的这个入参额外留意,结果引入问题;
+一个常见的例子是,使用scanf或sscanf输入ip地址或mac地址:
+```C
+#include <stdio.h>
+
+void main()
+{
+        unsigned char ip[4] = {0};
+
+        printf("%d,%d,%d,%d\n", ip[0], ip[1], ip[2], ip[3]);
+        scanf("%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
+        printf("%d,%d,%d,%d\n", ip[0], ip[1], ip[2], ip[3]);
+}
+```
+
+上述代码编译后,在mips平台上,得不到预期的结果,执行如下:
+```
+# ./a.out 
+0,0,0,0
+192.168.1.1
+0,0,0,0
+```
+
+而在x86平台上,却能得到了预期的结果,执行如下:
+```
+# ./a.out 
+0,0,0,0
+192.168.1.1
+192,168,1,1
+```
+
+那是不是x86平台的编译器做了一些检查和优化呢? 
+不一定,考虑到单字节的char型和4字节的int型的处理,更可能引起上述执行差异的是mips和x86上字节序的区别;
+而输入的192.168.1.1实际上是分别识别为4个int型变量(分别为: 0x000000c0,0x000000a8,0x00000001,0x00000001),赋值到入参的4个unsigned char行变量上;
+在mips上,big endian
+
+低地址 |  ip-1  | *ip+0* | *ip+1* | *ip+2* | *ip+3* |  ip+4  |  ip+5  |  ip+6  |  ip+7  | 高地址
+-------|--------|--------|--------|--------|--------|--------|--------|--------|--------|-------|
+       | ...... |**0x00**|**0x00**|**0x00**|**0xc0**| ...... | ...... | ...... | ...... |       
+       | ...... |  0x00  |**0x00**|**0x00**|**0x00**|**0xa8**| ...... | ...... | ...... |       
+       | ...... |  0x00  |  0x00  |**0x00**|**0x00**|**0x00**|**0x01**| ...... | ...... |       
+       | ...... |  0x00  |  0x00  |  0x00  |**0x00**|**0x00**|**0x00**|**0x01**| ...... |       
+得到最终结果为0,0,0,0
+
+而在x86上,little endian 
+
+低地址 |  ip-1  | *ip+0* | *ip+1* | *ip+2* | *ip+3* |  ip+4  |  ip+5  |  ip+6  |  ip+7  | 高地址
+-------|--------|--------|--------|--------|--------|--------|--------|--------|--------|-------|
+       | ...... |**0xc0**|**0x00**|**0x00**|**0x00**| ...... | ...... | ...... | ...... |       
+       | ...... |  0xc0  |**0xa8**|**0x00**|**0x00**|**0x00**| ...... | ...... | ...... |       
+       | ...... |  0xc0  |  0xa8  |**0x01**|**0x00**|**0x00**|**0x00**| ...... | ...... |       
+       | ...... |  0xc0  |  0xa8  |  0x01  |**0x01**|**0x00**|**0x00**|**0x00**| ...... |        
+得到最终结果为192,168,0,1
+
+上述猜想的验证,请看如下代码及执行结果,并自行分析:
+```C
+#include <stdio.h>
+
+#define PRINT_IP(ip) printf("%s: [%d.%d.%d.%d], address:[%p,%p,%p,%p]\n", \
+  #ip, (ip)[0], (ip)[1], (ip)[2], (ip)[3], &(ip)[0], &(ip)[1], &(ip)[2], &(ip)[3])
+
+void main()
+{
+        unsigned char ip_a[4] = {101,102,103,104};
+        unsigned char ip[4] = {0,0,0,0};
+        unsigned char ip_b[4] = {201,202,203,204};
+
+        PRINT_IP(ip_a);
+        PRINT_IP(ip);
+        PRINT_IP(ip_b);
+        scanf("%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
+        PRINT_IP(ip_a);
+        PRINT_IP(ip);
+        PRINT_IP(ip_b);
+}
+```
+mips执行如下:
+```
+# echo $((0x11121314)).$((0x21222324)).$((0x31323334)).$((0x41424344)) | ./a.out 
+ip_a: [101.102.103.104], address:[0x7fbb4390,0x7fbb4391,0x7fbb4392,0x7fbb4393]
+ip: [0.0.0.0], address:[0x7fbb4394,0x7fbb4395,0x7fbb4396,0x7fbb4397]
+ip_b: [201.202.203.204], address:[0x7fbb4398,0x7fbb4399,0x7fbb439a,0x7fbb439b]
+ip_a: [101.102.103.104], address:[0x7fbb4390,0x7fbb4391,0x7fbb4392,0x7fbb4393]
+ip: [17.33.49.65], address:[0x7fbb4394,0x7fbb4395,0x7fbb4396,0x7fbb4397]
+ip_b: [66.67.68.204], address:[0x7fbb4398,0x7fbb4399,0x7fbb439a,0x7fbb439b]
+```
+
+x86执行如下:
+```
+# echo $((0x11121314)).$((0x21222324)).$((0x31323334)).$((0x41424344)) | ./a.out
+ip_a: [101.102.103.104], address:[0xbfbe527c,0xbfbe527d,0xbfbe527e,0xbfbe527f]
+ip: [0.0.0.0], address:[0xbfbe5278,0xbfbe5279,0xbfbe527a,0xbfbe527b]
+ip_b: [201.202.203.204], address:[0xbfbe5274,0xbfbe5275,0xbfbe5276,0xbfbe5277]
+ip_a: [67.66.65.104], address:[0xbfbe527c,0xbfbe527d,0xbfbe527e,0xbfbe527f]
+ip: [20.36.52.68], address:[0xbfbe5278,0xbfbe5279,0xbfbe527a,0xbfbe527b]
+ip_b: [201.202.203.204], address:[0xbfbe5274,0xbfbe5275,0xbfbe5276,0xbfbe5277]
+```
+
+对于上述例子中的问题,比较好的解决办法是, **输入char型时,使用hh修饰,如hhd或hhx** :
+```
+       h      Indicates that the conversion will be one of d, i, o, u, x, X, or n and the next pointer is a pointer to a short int or unsigned short  int  (rather
+              than int).
+
+       hh     As for h, but the next pointer is a pointer to a signed char or unsigned char.
+```
+
+####附:
+上次讨论,我的演示代码,执行scanf结果不会有上述问题, **但实际上是因为输入时的分割符不对** (代码中使用逗号,而输入时顺手输成了空格),导致没有正确输入,请看当时的代码,和执行结果:
+```C
+#include <stdio.h>
+ 
+int main() {
+        char str[9] = {0};
+ 
+        str[6]=0x66;
+        str[7]=0x77;
+        str[8]=0x88;
+ 
+        scanf("%d,%d,%d,%d,%d,%d", &str[0], &str[1], &str[2], &str[3], &str[4], &str[5]);
+ 
+        printf("%02x %02x %02x\n", str[6], str[7], str[8]);
+}
+```
+
+```
+$ gcc a.c
+$ ./a.out
+00,11,22,33,44,55
+00 00 00
+$ ./a.out
+00 11 22 33 44 55
+66 77 ffffff88
+```
+
+
+
+
+
+
+
 
