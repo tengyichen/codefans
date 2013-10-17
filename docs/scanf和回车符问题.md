@@ -1,9 +1,8 @@
-﻿# scanf与\n的问题
-
+# scanf与\n的问题
+written by 俞梦涛
 ## 现象
 
-在社团活动遇到的一个bug  
-源码（略作修改）：  
+在社团活动遇到的一个bug,源码（略作修改）：  
 
     scanf("%d %d\n",&a,&b);  
     printf("a=%d b=%d\n",a,b);
